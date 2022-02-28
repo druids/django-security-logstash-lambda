@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import zlib
 import socket
 
@@ -10,8 +11,8 @@ except ImportError:
 
 
 # Parameters
-host = ''
-port = ''
+host = os.environ['LOGSTASH_HOST']
+port = int(os.environ['LOGSTASH_PORT'])
 
 metadata = {}
 
