@@ -51,6 +51,9 @@ def lambda_handler(event, context):
 
         for log_message, log_metadata in logs:
             s.send(serialize_message(log_message, merge_dicts(log_metadata, metadata)))
+        return {'statusCode': 200, 'body': 'Success!'}
+    except Exception:
+        return {'statusCode': 500, 'body': 'Raised exception!'}
     finally:
         s.close()
 
