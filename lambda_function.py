@@ -50,7 +50,7 @@ def lambda_handler(event, context):
         logs = awslogs_handler(event)
 
         for log_message, log_metadata in logs:
-            s.send(serialize_message(log_message, merge_dicts(metadata, log_metadata)))
+            s.send(serialize_message(log_message, merge_dicts(log_metadata, metadata)))
     finally:
         s.close()
 
