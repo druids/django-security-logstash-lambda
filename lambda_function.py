@@ -3,6 +3,9 @@ import json
 import os
 import zlib
 import socket
+import boto3
+
+from uuid import uuid4
 
 try:
     import json
@@ -10,52 +13,86 @@ except ImportError:
     import simplejson as json
 
 # Parameters
-host = os.environ['LOGSTASH_HOST']
-port = int(os.environ['LOGSTASH_PORT'])
-timeout = int(os.environ.get('LOGSTASH_TIMEOUT', 5))
+
+logstash = False
+sqs = False
+
+if os.environ.get('LOGSTASH', 'off') == 'on':
+    logstash = True
+    host = os.environ['LOGSTASH_HOST']
+    port = int(os.environ['LOGSTASH_PORT'])
+    timeout = int(os.environ.get('LOGSTASH_TIMEOUT', 5))
+
+
+if os.environ.get('SQS', 'off') == 'on':
+    sqs = True
+    queue_name = os.environ['SQS_QUEUE']
 
 
 def serialize_message(message, metadata):
-    return bytes(
-        json.dumps({
-            'message': message,
-            'meta': metadata,
-        }) + '\n', 'utf-8'
-    )
+    return json.dumps({
+        'message': message,
+        'meta': metadata,
+    })
 
 
 def lambda_handler(event, context):
+    # Add the context to meta
+    metadata = {
+        'aws': {
+            'function_name': context.function_name,
+            'function_version': context.function_version,
+            'invoked_function_arn': context.invoked_function_arn,
+            'memory_limit_in_mb': context.memory_limit_in_mb,
+        }
+    }
+    # Parse logs
+    logs = awslogs_handler(event)
+
+    if logstash:
+        send_to_logstash(logs, metadata)
+
+    if sqs:
+        send_to_sqs(logs, metadata)
+
+
+def send_to_logstash(logs, metadata):
     if not host or not port:
         raise Exception(
             'You must configure your Logstash hostname and port before '
             'starting this lambda function (see #Parameters section)'
         )
 
-    # Attach Logstash TCP Socket
     socket.setdefaulttimeout(timeout)
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((host, port))
-
     try:
-        # Add the context to meta
-        metadata = {
-            'aws': {
-                'function_name': context.function_name,
-                'function_version': context.function_version,
-                'invoked_function_arn': context.invoked_function_arn,
-                'memory_limit_in_mb': context.memory_limit_in_mb,
-            }
-        }
-        # Parse logs
-        logs = awslogs_handler(event)
-
+        s.connect((host, port))
         for log_message, log_metadata in logs:
-            s.send(serialize_message(log_message, merge_dicts(log_metadata, metadata)))
-        return {'statusCode': 200, 'body': 'Success!'}
-    except Exception:
-        return {'statusCode': 500, 'body': 'Raised exception!'}
+            s.send(bytes(serialize_message(log_message, merge_dicts(log_metadata, metadata) + '\n'), 'utf-8'))
     finally:
         s.close()
+
+
+def send_to_sqs(logs, metadata):
+    if not queue_name:
+        raise Exception(
+            'You must configure your SQS queue name before '
+            'starting this lambda function (see #Parameters section)'
+        )
+
+    sqs_client = boto3.client('sqs')
+
+    queue_url = sqs_client.get_queue_url(
+        QueueName=queue_name,
+    )['QueueUrl']
+
+    for log_message, log_metadata in logs:
+        sqs_client.send_message(
+            QueueUrl=queue_url,
+            MessageBody=serialize_message(log_message, merge_dicts(log_metadata, metadata)),
+            MessageGroupId=str(uuid4()),
+            MessageDeduplicationId=str(uuid4()),
+        )
 
 
 # Handle CloudWatch events and logs
