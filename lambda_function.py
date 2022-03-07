@@ -26,7 +26,7 @@ if os.environ.get('LOGSTASH', 'off') == 'on':
 
 if os.environ.get('SQS', 'off') == 'on':
     sqs = True
-    queue_name = os.environ['SQS_QUEUE']
+    queue_url = os.environ['SQS_QUEUE_URL']
 
 
 def serialize_message(message, metadata):
@@ -74,25 +74,24 @@ def send_to_logstash(logs, metadata):
 
 
 def send_to_sqs(logs, metadata):
-    if not queue_name:
+    if not queue_url:
         raise Exception(
             'You must configure your SQS queue name before '
             'starting this lambda function (see #Parameters section)'
         )
 
-    sqs_client = boto3.client('sqs')
-
-    queue_url = sqs_client.get_queue_url(
-        QueueName=queue_name,
-    )['QueueUrl']
-
-    for log_message, log_metadata in logs:
-        sqs_client.send_message(
-            QueueUrl=queue_url,
-            MessageBody=serialize_message(log_message, merge_dicts(log_metadata, metadata)),
-            MessageGroupId=str(uuid4()),
-            MessageDeduplicationId=str(uuid4()),
-        )
+    boto3.client('sqs').send_message_batch(
+        QueueUrl=queue_url,
+        Entries=[
+            dict(
+                Id=str(uuid4()),
+                MessageBody=serialize_message(log_message, merge_dicts(log_metadata, metadata)),
+                MessageGroupId=str(uuid4()),
+                MessageDeduplicationId=str(uuid4()),
+            )
+            for log_message, log_metadata in logs
+        ]
+    )
 
 
 # Handle CloudWatch events and logs
