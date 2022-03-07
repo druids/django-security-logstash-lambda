@@ -73,6 +73,12 @@ def send_to_logstash(logs, metadata):
         s.close()
 
 
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
 def send_to_sqs(logs, metadata):
     if not queue_url:
         raise Exception(
@@ -80,18 +86,20 @@ def send_to_sqs(logs, metadata):
             'starting this lambda function (see #Parameters section)'
         )
 
-    boto3.client('sqs').send_message_batch(
-        QueueUrl=queue_url,
-        Entries=[
-            dict(
-                Id=str(uuid4()),
-                MessageBody=serialize_message(log_message, merge_dicts(log_metadata, metadata)),
-                MessageGroupId=str(uuid4()),
-                MessageDeduplicationId=str(uuid4()),
-            )
-            for log_message, log_metadata in logs
-        ]
-    )
+    sqs_client = boto3.client('sqs')
+    for chunked_logs in chunks(logs, 10):
+        sqs_client.send_message_batch(
+            QueueUrl=queue_url,
+            Entries=[
+                dict(
+                    Id=str(uuid4()),
+                    MessageBody=serialize_message(log_message, merge_dicts(log_metadata, metadata)),
+                    MessageGroupId=str(uuid4()),
+                    MessageDeduplicationId=str(uuid4()),
+                )
+                for log_message, log_metadata in chunked_logs
+            ]
+        )
 
 
 # Handle CloudWatch events and logs
